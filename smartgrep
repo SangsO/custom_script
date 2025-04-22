@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+# -----------------------------------------------------------------------------
+#  smartgrep – Smart recursive grep helper
+#
+#  Copyright (c) 2025 Gyusang Oh (Liam.Oh)
+
+#  Organization : **Semifive SW Team**
+#  Email        : **liam.oh@semifive.com**
+#  GitHub       : **https://github.com/SangsO**
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the “Software”), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#  THE SOFTWARE.
+# -----------------------------------------------------------------------------
+
+
+# Debugging: Show each executed command. Remove this line if you don't need debugging logs.
+#set -x
+
+CMD_NAME=$(basename "$0")
+
+# These extensions will always be excluded when no user-defined extensions are provided.
+# If you specify your own extensions, these excluded extensions are ignored in the 'find' approach,
+# but you can integrate them into the find expression if you want.
+EXCLUDE_EXTS=(
+  "*.tags"
+  "cscope.*"
+  "*.zip"
+  "*.tar"
+  "*.gz"
+  "*.tar.gz"
+)
+
+print_help() {
+  echo ""
+  echo "Usage: $CMD_NAME <pattern> [extensions...] [--anycase|--a|-a]"
+  echo ""
+  echo "Searches for <pattern> recursively. Optionally restricts to certain file extensions,"
+  echo "and optionally ignores case if any of [--anycase, --a, -a] is provided."
+  echo ""
+  echo "Arguments:"
+  echo "  <pattern>             Required. String pattern to search for."
+  echo "  [extensions...]       Optional. One or more file extensions to ONLY search (e.g. .c, .h, .cpp)."
+  echo "  [--anycase | --a | -a] Optional. Ignore case (grep -i)."
+  echo ""
+  echo "Examples:"
+  echo "  $CMD_NAME 'TODO'"
+  echo "  $CMD_NAME 'error' .c .cpp"
+  echo "  $CMD_NAME 'lpddr5x' .c .h --anycase"
+  echo "  $CMD_NAME 'Error' --a"
+  echo ""
+  echo "Always-excluded extensions (applied only when no file extensions are specified):"
+  for ext in "${EXCLUDE_EXTS[@]}"; do
+    echo "  - $ext"
+  done
+  echo ""
+}
+
+# (1) The first argument must be the search PATTERN.
+if [[ $# -lt 1 ]]; then
+  echo "[!] Missing pattern."
+  print_help
+  exit 1
+fi
+
+PATTERN="$1"
+shift
+
+# (2) Parse remaining arguments for either:
+#     -a, --a, or --anycase => enable IGNORE_CASE
+#     Otherwise => treat them as file extensions
+IGNORE_CASE=false
+EXT_LIST=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|-anycase)
+      IGNORE_CASE=true
+      shift
+      ;;
+    -h|-help)
+      print_help
+      exit 0
+      ;;
+    *)
+      # All other inputs are interpreted as file extensions.
+      EXT_LIST+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# (3) Main logic:
+#     - If EXT_LIST is empty => grep -Rn with excludes.
+#     - If EXT_LIST is not empty => use find + grep for multiple extension support.
+if [[ ${#EXT_LIST[@]} -eq 0 ]]; then
+  # No extensions specified => use normal grep with exclude patterns
+  echo "[INFO] No extension specified. Searching the entire directory (excluding certain extensions)."
+  echo "[INFO] Ignore case = $IGNORE_CASE"
+
+  GREP_ARGS=(-Rn --color=auto)
+  if $IGNORE_CASE; then
+    GREP_ARGS+=(-i)
+  fi
+
+  # Apply exclude patterns
+  for ext in "${EXCLUDE_EXTS[@]}"; do
+    GREP_ARGS+=(--exclude="$ext")
+  done
+
+  # Add pattern and target directory
+  GREP_ARGS+=("$PATTERN" ".")
+
+  /usr/bin/grep "${GREP_ARGS[@]}"
+
+else
+  # One or more extensions => find + grep approach
+  echo "[INFO] Extensions: ${EXT_LIST[*]}"
+  echo "[INFO] Ignore case = $IGNORE_CASE"
+
+  GREP_OPTS=(-nH --color=auto)
+  if $IGNORE_CASE; then
+    GREP_OPTS+=(-i)
+  fi
+
+  # Build the find expression for multiple extensions:
+  # e.g.  ( -name "*.c" -o -name "*.cpp" -o -name "*.h" )
+  FIND_EXPR=(-type f '(')
+
+  for i in "${!EXT_LIST[@]}"; do
+    ext="${EXT_LIST[$i]}"
+    if [[ $i -lt $(( ${#EXT_LIST[@]} - 1 )) ]]; then
+      FIND_EXPR+=(-name "*$ext" -o)
+    else
+      FIND_EXPR+=(-name "*$ext")
+    fi
+  done
+
+  FIND_EXPR+=(')')
+
+  echo "[DEBUG] find expression: ${FIND_EXPR[*]}"
+
+  # Execute find + grep
+  find . "${FIND_EXPR[@]}" -exec /usr/bin/grep "${GREP_OPTS[@]}" "$PATTERN" {} +
+fi
