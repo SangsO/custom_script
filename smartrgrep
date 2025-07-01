@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# smartrg – multipurpose ripgrep-based search script
+#
+# Usage:
+#   smartrg <pattern> [extensions...] [--anycase | --a | -a]
+#
+# Arguments:
+#   <pattern>       : Required. Regex pattern to search for.
+#   [extensions...] : Optional. One or more file extensions (e.g. .c, .h, .cpp).
+#                     If provided, only files with these extensions are searched.
+#                     If omitted, the entire directory tree is scanned.
+#   --anycase/-a    : Ignore case (equivalent to rg -i).
+#
+# Examples:
+#   smartrg "TODO"
+#   smartrg "error" .c .cpp
+#   smartrg "lpddr5x" .c .h --anycase
+#
+
+CMD_NAME=$(basename "$0")
+
+# (1) Extensions that should *always* be excluded, regardless of .gitignore.
+EXCLUDE_EXTS=(
+  "*.tags"
+  "cscope.*"
+  "*.zip"
+  "*.tar"
+  "*.gz"
+  "*.tar.gz"
+  "tags"
+)
+
+print_help() {
+  echo ""
+  echo "Usage: $CMD_NAME <pattern> [extensions...] [--anycase|-a]"
+  echo ""
+  echo "Arguments:"
+  echo "  <pattern>             Required. Regex pattern to search for."
+  echo "  [extensions...]       Optional. File extensions to include (.c .h ...)."
+  echo "  [--anycase | -a]      Optional. Ignore case (ripgrep -i)."
+  echo ""
+  echo "Examples:"
+  echo "  $CMD_NAME \"TODO\""
+  echo "  $CMD_NAME \"error\" .c .cpp"
+  echo "  $CMD_NAME \"lpddr5x\" .c .h --anycase"
+  echo ""
+  echo "Extensions that are always excluded when no extension is specified:"
+  for ext in "${EXCLUDE_EXTS[@]}"; do
+    echo "  - $ext"
+  done
+  echo ""
+}
+
+# ──────────────────────────────────────────────────────────────────────────
+# 1) A search pattern is mandatory.
+[[ $# -lt 1 ]] && { echo "[!] Missing pattern."; print_help; exit 1; }
+PATTERN=$1; shift
+
+# 2) Parse remaining arguments.
+IGNORE_CASE=false
+EXT_LIST=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--anycase)   IGNORE_CASE=true; shift ;;
+    -h|--help)      print_help; exit 0 ;;
+    *)              EXT_LIST+=("$1"); shift ;;
+  esac
+done
+
+# 3) Common ripgrep options.
+RG_ARGS=(-n --color=auto)  # -n: print line number, colored output
+$IGNORE_CASE && RG_ARGS+=(-i)
+
+# 4‑A) No extensions specified: scan everything, but exclude EXCLUDE_EXTS.
+if [[ ${#EXT_LIST[@]} -eq 0 ]]; then
+  echo "[INFO] No extension specified. Scanning all files."
+  echo "[INFO] Ignore case = $IGNORE_CASE"
+
+  for ext in "${EXCLUDE_EXTS[@]}"; do
+    RG_ARGS+=(-g "!$ext")
+  done
+
+  rg "${RG_ARGS[@]}" "$PATTERN" .
+
+# 4‑B) Extensions provided: build -g filters.
+else
+  echo "[INFO] Extensions: ${EXT_LIST[*]}"
+  echo "[INFO] Ignore case = $IGNORE_CASE"
+
+  for ext in "${EXT_LIST[@]}"; do
+    [[ $ext == .* ]] && ext="*${ext}"
+    RG_ARGS+=(-g "$ext")
+  done
+
+  rg "${RG_ARGS[@]}" "$PATTERN" .
+fi
